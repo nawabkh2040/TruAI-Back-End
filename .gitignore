@@ -1,0 +1,8 @@
+.history/.env_20251225140925
+.env_20251225140925
+.env*
+!.env.example
+.history/*
+__pycache__/*
+*.pyc
+venv/
