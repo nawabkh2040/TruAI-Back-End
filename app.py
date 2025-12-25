@@ -20,12 +20,9 @@ def root() -> dict:
     return {"status": "ok", "service": "ai-image-checker"}
 
 
-@app.post("/check")
+@app.post("/check_image")
 async def check_image(file: UploadFile = File(...), threshold: float = Form(0.5)) -> Any:
     """Receive an uploaded image, save locally, run AI-detection, delete file, return result.
-
-    API credentials are read from environment variables `SIGHTENGINE_API_USER` and
-    `SIGHTENGINE_API_SECRET`.
     """
     if detect_ai_generated is None:
         raise HTTPException(status_code=500, detail="images_cheker.detect_ai_generated not available")
