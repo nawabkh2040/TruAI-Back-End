@@ -12,6 +12,15 @@ import requests
 import os
 import io
 import tempfile
+import random
+from typing import List, Dict
+
+try:
+	import cv2
+	import numpy as np
+except Exception:
+	cv2 = None
+	np = None
 
 try:
 	import PIL.Image as Image
@@ -174,6 +183,157 @@ def detect_ai_generated(image: str, api_user: str, api_secret: str, *, models: s
 				os.remove(upload_path)
 		except Exception:
 			pass
+
+
+def check_video_frames(video_path: str, api_user: str, api_secret: str, *, sample_count: int = 5, quality: int = 75, max_bytes: int = 12 * 1024 * 1024, timeout: int = 15) -> List[Dict]:
+	"""Sample random frames from a video, save as WebP, run AI-detection on each.
+
+	Returns a list of dicts: {"frame_index": int, "is_ai": bool, "score": float, "raw": dict}
+
+	Requires `opencv-python` and `numpy`. If OpenCV is not available an error is raised.
+	Temporary WebP files are removed before returning.
+	"""
+	if cv2 is None or np is None:
+		raise RuntimeError("opencv-python and numpy are required to sample video frames")
+
+	if not os.path.isfile(video_path):
+		raise ValueError(f"Video file not found: {video_path}")
+
+	cap = cv2.VideoCapture(video_path)
+	if not cap.isOpened():
+		raise RuntimeError("Unable to open video file")
+
+	try:
+		frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+		if frame_count <= 0:
+			# fallback: iterate to count frames (slow)
+			frame_count = 0
+			while True:
+				ret, _ = cap.read()
+				if not ret:
+					break
+				frame_count += 1
+			cap.release()
+			cap = cv2.VideoCapture(video_path)
+
+		# choose sample indices
+		sample_count = max(1, int(sample_count))
+		if frame_count <= sample_count:
+			indices = list(range(frame_count))
+		else:
+			indices = random.sample(range(frame_count), sample_count)
+
+		results: List[Dict] = []
+		temp_files: List[str] = []
+
+		for idx in indices:
+			cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+			ret, frame = cap.read()
+			if not ret or frame is None:
+				continue
+
+			# convert BGR -> RGB
+			rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+			# convert to PIL image for fast webp save
+			try:
+				from PIL import Image as PilImage
+				im = PilImage.fromarray(rgb)
+			except Exception:
+				# fallback: write using OpenCV (will be png/jpg) then convert
+				tf = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+				cv2.imwrite(tf.name, frame)
+				try:
+					from PIL import Image as PilImage
+					im = PilImage.open(tf.name).convert("RGB")
+				finally:
+					try:
+						os.remove(tf.name)
+					except Exception:
+						pass
+
+			# write to temp webp file
+			tf = tempfile.NamedTemporaryFile(delete=False, suffix=".webp")
+			temp_files.append(tf.name)
+			try:
+				im.save(tf.name, format="WEBP", quality=int(quality), method=6)
+			except Exception:
+				im.save(tf.name, format="WEBP")
+
+			# ensure size constraint; if too large, run prepare_image_for_upload
+			try:
+				if os.path.getsize(tf.name) > max_bytes:
+					small_path, is_temp = prepare_image_for_upload(tf.name, max_bytes=max_bytes)
+					if is_temp and small_path != tf.name:
+						# replace temp file
+						try:
+							os.remove(tf.name)
+						except Exception:
+							pass
+						tf.name = small_path
+						temp_files[-1] = small_path
+			except Exception:
+				pass
+
+			# run detection
+			try:
+				is_ai, score, raw = detect_ai_generated(tf.name, api_user, api_secret, timeout=timeout)
+			except Exception as e:
+				is_ai, score, raw = False, 0.0, {"error": str(e)}
+
+			results.append({"frame_index": int(idx), "is_ai": bool(is_ai), "score": float(score), "raw": raw})
+
+		return results
+
+	finally:
+		try:
+			cap.release()
+		except Exception:
+			pass
+		# cleanup temp files
+		for p in locals().get("temp_files", []):
+			try:
+				if p and os.path.exists(p):
+					os.remove(p)
+			except Exception:
+				pass
+
+
+def summarize_frame_results(results: List[Dict], threshold: float = 0.5, percent_threshold: float = 0.3, max_threshold: float = 0.9, avg_threshold: float = 0.6) -> Dict:
+	"""Produce a concise summary and decision from frame-level results.
+
+	Decision rules (defaults):
+	  - AI if >= `percent_threshold` of frames have score >= `threshold`
+	  - OR if max score >= `max_threshold`
+	  - OR if average score >= `avg_threshold`
+	"""
+	scores = [float(r.get("score", 0.0)) for r in results]
+	n = len(scores)
+	if n == 0:
+		return {"n_frames": 0, "avg_score": 0.0, "max_score": 0.0, "frames_above": 0, "percent_above": 0.0, "decision": False, "reason": "no_frames"}
+	avg = sum(scores) / n
+	mx = max(scores)
+	frames_above = sum(1 for s in scores if s >= threshold)
+	percent_above = frames_above / n
+	decision = (percent_above >= percent_threshold) or (mx >= max_threshold) or (avg >= avg_threshold)
+
+	if mx >= max_threshold:
+		reason = f"max_score {mx:.2f} >= {max_threshold}"
+	elif percent_above >= percent_threshold:
+		reason = f"{percent_above:.2%} frames >= {threshold}"
+	elif avg >= avg_threshold:
+		reason = f"avg_score {avg:.2f} >= {avg_threshold}"
+	else:
+		reason = "no strong AI signal"
+
+	return {
+		"n_frames": n,
+		"avg_score": round(avg, 4),
+		"max_score": round(mx, 4),
+		"frames_above": frames_above,
+		"percent_above": round(percent_above, 4),
+		"decision": bool(decision),
+		"reason": reason,
+	}
 
 
 if __name__ == "__main__":
