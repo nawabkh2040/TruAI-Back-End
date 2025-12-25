@@ -185,7 +185,7 @@ def detect_ai_generated(image: str, api_user: str, api_secret: str, *, models: s
 			pass
 
 
-def check_video_frames(video_path: str, api_user: str, api_secret: str, *, sample_count: int = 5, quality: int = 75, max_bytes: int = 12 * 1024 * 1024, timeout: int = 15) -> List[Dict]:
+def check_video_frames(video_path: str, api_user: str, api_secret: str, *, sample_count: Optional[int] = None, quality: int = 75, max_bytes: int = 12 * 1024 * 1024, timeout: int = 15) -> List[Dict]:
 	"""Sample random frames from a video, save as WebP, run AI-detection on each.
 
 	Returns a list of dicts: {"frame_index": int, "is_ai": bool, "score": float, "raw": dict}
@@ -195,6 +195,10 @@ def check_video_frames(video_path: str, api_user: str, api_secret: str, *, sampl
 	"""
 	if cv2 is None or np is None:
 		raise RuntimeError("opencv-python and numpy are required to sample video frames")
+
+	# Pillow is required to save frames as WebP reliably
+	if Image is None:
+		raise RuntimeError("Pillow (PIL) is required to process frames. Install with: pip install pillow")
 
 	if not os.path.isfile(video_path):
 		raise ValueError(f"Video file not found: {video_path}")
@@ -216,12 +220,19 @@ def check_video_frames(video_path: str, api_user: str, api_secret: str, *, sampl
 			cap.release()
 			cap = cv2.VideoCapture(video_path)
 
-		# choose sample indices
-		sample_count = max(1, int(sample_count))
-		if frame_count <= sample_count:
-			indices = list(range(frame_count))
+		# determine sample_count based on frame_count if not provided
+		if sample_count is None or int(sample_count) <= 0:
+			# choose number of samples proportional to sqrt of frame_count, capped
+			computed = int(min(60, max(3, frame_count ** 0.5)))
+			sample_count = min(frame_count, computed)
 		else:
-			indices = random.sample(range(frame_count), sample_count)
+			sample_count = int(max(1, min(frame_count, int(sample_count))))
+
+		# pick evenly spaced frame indices to cover whole video
+		if sample_count == 1:
+			indices = [0]
+		else:
+			indices = [int(round(i * (frame_count - 1) / (sample_count - 1))) for i in range(sample_count)]
 
 		results: List[Dict] = []
 		temp_files: List[str] = []
