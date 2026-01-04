@@ -17,7 +17,7 @@ app = FastAPI(title="AI Image Checker")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://www.truai.work.gd","truai.work.gd","http://139.59.79.62:7575","*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
