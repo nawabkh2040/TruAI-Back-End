@@ -17,7 +17,14 @@ app = FastAPI(title="AI Image Checker")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://www.truai.work.gd","truai.work.gd","http://139.59.79.62:7474","*"],
+    allow_origins=[
+        "https://www.truai.work.gd",
+        "http://www.truai.work.gd",
+        "http://truai.work.gd",
+        "https://truai.work.gd",
+        "http://139.59.79.62:7474",
+        "http://0.0.0.0:7474"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -106,3 +113,8 @@ async def check_video(file: UploadFile = File(...), sample_count: int = Form(0),
                 os.remove(tmp_path)
         except Exception:
             pass
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=7474, reload=True)
