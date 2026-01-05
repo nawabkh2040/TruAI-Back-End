@@ -3,9 +3,13 @@
 .env*
 !.env.example
 .history/*
+temp_auto_push.bat
 __pycache__/*
 *.pyc
 venv/
 
 ntest*
 help.txt
+temp_interactive_push.bat
+.gitignore
+branch_structure.json
